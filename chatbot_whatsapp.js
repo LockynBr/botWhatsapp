@@ -1,8 +1,7 @@
-
 // Dependências
 const qrcode = require('qrcode-terminal');
 const { Client, Buttons, List, MessageMedia } = require('whatsapp-web.js'); 
-const rateLimit = require('express-rate-limit'); // Supondo o uso de algum middleware para controle de taxa
+const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2');
 const client = new Client();
 
@@ -51,8 +50,7 @@ client.on('ready', () => {
 // Inicializa o cliente do WhatsApp
 client.initialize();
 
-// Função principal de atendimento
-// Variável para armazenar o estado da conversa
+// Variáveis para armazenar o estado da conversa
 let currentStep = {};
 let manualMode = {}; // Armazena se o cliente está no modo manual
 
@@ -81,14 +79,89 @@ const getChatState = (userId, callback) => {
     });
 };
 
+// Função para buscar um menu específico do banco de dados
+const getMenu = (menuId, callback) => {
+    const query = 'SELECT * FROM menus WHERE menu_id = ?';
+    db.execute(query, [menuId], (err, results) => {
+        if (err) throw err;
+        callback(results[0]); // Retorna o menu
+    });
+};
+
+// Função para buscar as opções de um menu específico do banco de dados
+const getMenuOptions = (menuId, callback) => {
+    const query = 'SELECT * FROM menu_options WHERE menu_id = ?';
+    db.execute(query, [menuId], (err, results) => {
+        if (err) throw err;
+        callback(results); // Retorna as opções do menu
+    });
+};
+
+// Função para mostrar o menu dinâmico
+const showMenu = async (chat, menuId) => {
+    getMenu(menuId, async (menu) => {
+        getMenuOptions(menuId, async (options) => {
+            let menuMessage = `${menu.menu_name}\n${menu.description}\nEscolha uma das opções abaixo:\n`;
+            options.forEach((option, index) => {
+                menuMessage += `${index + 1} - ${option.option_text}\n`;
+            });
+            await sendTypingAndMessage(chat, menuMessage, 3000, 3000);
+            currentStep[chat.id._serialized] = menuId; // Salva o estado do menu atual
+        });
+    });
+};
+
+// Função para finalizar a automação e passar para o modo manual
+const endAutomation = async (chat) => {
+    await sendTypingAndMessage(chat, `Obrigado por utilizar nosso assistente automático! A partir de agora, você será atendido manualmente.`, 3000, 3000);
+    manualMode[chat.id._serialized] = true; // Coloca o cliente no modo manual
+};
+
+// Função para tratar a escolha do menu com base nas opções do banco de dados
+const handleMenuOption = async (chat, userOption, menuId) => {
+    getMenuOptions(menuId, async (menuOptions) => {
+        const optionIndex = parseInt(userOption) - 1;
+        if (optionIndex >= 0 && optionIndex < menuOptions.length) {
+            const selectedOption = menuOptions[optionIndex];
+
+            // Buscar a resposta personalizada com base na opção selecionada
+            getMenuResponse(selectedOption.option_id, async (responseText) => {
+                if (responseText) {
+                    await sendTypingAndMessage(chat, responseText, 3000, 3000);
+                } else if (selectedOption.next_menu_id) {
+                    await showMenu(chat, selectedOption.next_menu_id); // Vai para o próximo menu se houver
+                } else {
+                    await sendTypingAndMessage(chat, `Opção selecionada: ${selectedOption.option_text}`, 3000, 3000);
+                    await endAutomation(chat); // Finaliza a automação após a última mensagem
+                }
+            });
+        } else {
+            await showMenu(chat, menuId); // Mostra o menu novamente se a opção for inválida
+        }
+    });
+};
+
+// Função para buscar a resposta personalizada com base na opção selecionada
+const getMenuResponse = (optionId, callback) => {
+    const query = 'SELECT response_text FROM menu_responses WHERE option_id = ?';
+    db.execute(query, [optionId], (err, results) => {
+        if (err) throw err;
+        if (results.length > 0) {
+            callback(results[0].response_text); // Retorna a resposta personalizada
+        } else {
+            callback(null); // Caso não exista uma resposta personalizada
+        }
+    });
+};
+
+
+// Evento principal para tratamento de mensagens
 client.on('message', async msg => {
     try {
-        // Valida se a mensagem vem de um usuário
-        if (!msg.from.endsWith('@c.us')) return;
+        if (!msg.from.endsWith('@c.us')) return; // Valida se a mensagem vem de um usuário
 
         const chat = await msg.getChat();
-        const contact = await msg.getContact();
-        const name = contact.pushname ? contact.pushname.split(" ")[0] : 'Cliente';
+        const userMessage = msg.body.toLowerCase();
 
         // Se o cliente estiver no modo manual, você assume as respostas
         if (manualMode[msg.from]) {
@@ -96,90 +169,13 @@ client.on('message', async msg => {
             return; // Para de processar automaticamente
         }
 
-        // Função para finalizar a automação e passar para modo manual
-        const endAutomation = async () => {
-            await sendTypingAndMessage(chat, `Obrigado por utilizar nosso assistente automático! A partir de agora, você será atendido manualmente.`, 3000, 3000);
-            manualMode[msg.from] = true; // Coloca o cliente no modo manual
-        };
+        // Recupera o estado do chat (menu atual)
+        const menuId = currentStep[chat.id._serialized] || 1; // Menu inicial com id 1
 
-        // Função para mostrar o menu inicial
-        const showMainMenu = async () => {
-            await sendTypingAndMessage(chat, `Olá ${name}, sou o assistente virtual da sua loja de informática. Como posso ajudá-lo?
-Escolha uma das opções abaixo:
-1 - Conserto e manutenção de PC
-2 - Conserto e manutenção de impressora
-3 - Outro serviço`, 3000, 3000);
-            currentStep[msg.from] = 'menu'; // Salva o estado de menu inicial
-        };
-
-        // Função de pergunta sobre o tipo de impressora
-        const askPrinterType = async () => {
-            await sendTypingAndMessage(chat, `Sua impressora é:
-1 - Jato de tinta
-2 - Cartucho
-3 - Não sei, envie um vídeo explicativo
-4 - Voltar ao menu inicial`, 3000, 3000);
-            currentStep[msg.from] = 'printerType'; // Salva o estado de pergunta sobre impressora
-        };
-
-        // Função principal de escolha
-        const handleMenuOption = async option => {
-            switch (option) {
-                case '1':
-                    await sendTypingAndMessage(chat, `Oferecemos serviços de conserto e manutenção de computadores. Desde limpeza, formatação, até substituição de peças.
-Entre em contato para mais detalhes.`, 3000, 3000);
-                    await endAutomation(); // Finaliza a automação após a última mensagem
-                    break;
-                case '2':
-                    await sendTypingAndMessage(chat, `Realizamos conserto e manutenção de impressoras.`, 3000, 3000);
-                    await askPrinterType(); // Pergunta sobre o tipo de impressora
-                    break;
-                case '3':
-                    await sendTypingAndMessage(chat, `Em breve, mais serviços estarão disponíveis!`, 3000, 3000);
-                    await endAutomation(); // Finaliza a automação após a última mensagem
-                    break;
-                default:
-                    await showMainMenu(); // Mostra o menu inicial
-            }
-        };
-
-        // Verifica palavra-chave inicial ou opções
-        const menuKeywords = /(bom dia|boa tarde|boa noite|oi|olá|ola|teste)/i;
-
-        // Converte a mensagem para lower case para facilitar a validação
-        const userMessage = msg.body.toLowerCase();
-
-        // Caso o cliente esteja em um fluxo específico (tipo de impressora)
-        if (currentStep[msg.from] === 'printerType') {
-            if (userMessage === '1') {
-                await sendTypingAndMessage(chat, `Você escolheu uma impressora *jato de tinta*. Vamos prosseguir com o atendimento para esse tipo de impressora.`, 3000, 3000);
-                await endAutomation(); // Finaliza a automação
-            } else if (userMessage === '2') {
-                await sendTypingAndMessage(chat, `Você escolheu uma impressora *de cartucho*. Vamos prosseguir com o atendimento para esse tipo de impressora.`, 3000, 3000);
-                await endAutomation(); // Finaliza a automação
-            } else if (userMessage === '3') {
-                await sendTypingAndMessage(chat, `Aqui está o vídeo que te ajudará a identificar o tipo de sua impressora.
-[link do vídeo]`, 3000, 3000);
-                await askPrinterType(); // Pergunta novamente após o envio do vídeo
-            } else if (userMessage === '4') {
-                await showMainMenu(); // Voltar ao menu inicial
-            } else {
-                await sendTypingAndMessage(chat, `Escolha uma das opções abaixo:
-1 - Jato de tinta
-2 - Cartucho
-3 - Não sei, envie um vídeo explicativo
-4 - Voltar ao menu inicial`, 3000, 3000);
-            }
-            return; // Termina aqui o processamento para não cair no menu principal
-        }
-
-        // Verifica palavras-chave como "bom dia", "teste", etc.
-        if (menuKeywords.test(userMessage)) {
-            await sendTypingAndMessage(chat, 'Bem-vindo à nossa loja de informática! Como podemos ajudar?', 3000, 3000);
-        } else if (['1', '2', '3'].includes(userMessage)) {
-            await handleMenuOption(userMessage); // Executa a opção correspondente
+        if (/^\d+$/.test(userMessage)) {
+            await handleMenuOption(chat, userMessage, menuId); // Processa a opção selecionada
         } else {
-            await showMainMenu();
+            await showMenu(chat, menuId); // Exibe o menu atual
         }
 
         // Salva o novo estado no banco de dados
