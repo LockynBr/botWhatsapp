@@ -117,30 +117,6 @@ const endAutomation = async (chat) => {
     manualMode[chat.id._serialized] = true; // Coloca o cliente no modo manual
 };
 
-// Função para tratar a escolha do menu com base nas opções do banco de dados
-const handleMenuOption = async (chat, userOption, menuId) => {
-    getMenuOptions(menuId, async (menuOptions) => {
-        const optionIndex = parseInt(userOption) - 1;
-        if (optionIndex >= 0 && optionIndex < menuOptions.length) {
-            const selectedOption = menuOptions[optionIndex];
-
-            // Buscar a resposta personalizada com base na opção selecionada
-            getMenuResponse(selectedOption.option_id, async (responseText) => {
-                if (responseText) {
-                    await sendTypingAndMessage(chat, responseText, 3000, 3000);
-                } else if (selectedOption.next_menu_id) {
-                    await showMenu(chat, selectedOption.next_menu_id); // Vai para o próximo menu se houver
-                } else {
-                    await sendTypingAndMessage(chat, `Opção selecionada: ${selectedOption.option_text}`, 3000, 3000);
-                    await endAutomation(chat); // Finaliza a automação após a última mensagem
-                }
-            });
-        } else {
-            await showMenu(chat, menuId); // Mostra o menu novamente se a opção for inválida
-        }
-    });
-};
-
 // Função para buscar a resposta personalizada com base na opção selecionada
 const getMenuResponse = (optionId, callback) => {
     const query = 'SELECT response_text FROM menu_responses WHERE option_id = ?';
@@ -154,6 +130,47 @@ const getMenuResponse = (optionId, callback) => {
     });
 };
 
+// Função para tratar a escolha do menu com base nas opções do banco de dados
+const handleMenuOption = async (chat, userOption, menuId) => {
+    getMenuOptions(menuId, async (menuOptions) => {
+        const optionIndex = parseInt(userOption) - 1;
+        if (optionIndex >= 0 && optionIndex < menuOptions.length) {
+            const selectedOption = menuOptions[optionIndex];
+
+            // Verifica se há um próximo menu
+            if (selectedOption.next_menu_id) {
+                // Busca o próximo menu
+                getMenu(selectedOption.next_menu_id, async (nextMenu) => {
+                    if (nextMenu.video_url) {
+                        // Envia o vídeo se o próximo menu tiver um vídeo associado
+                        await sendTypingAndMessage(chat, `Aqui está um vídeo que pode te ajudar: ${nextMenu.video_url}`, 3000, 3000);
+
+                        // Após o envio do vídeo, pergunta sobre o tipo de impressora
+                        setTimeout(async () => {
+                            await sendTypingAndMessage(chat, 'Agora, por favor, selecione o tipo da sua impressora para continuarmos:', 3000, 3000);
+                            await showMenu(chat, 6); // Exibe o menu de tipos de impressora (menu_id = 6)
+                        }, 5000); // Aguarda 5 segundos após o vídeo antes de enviar a pergunta
+                    } else {
+                        // Se não houver vídeo, segue com o fluxo normal do menu
+                        await showMenu(chat, selectedOption.next_menu_id);
+                    }
+                });
+            } else {
+                // Buscar a resposta personalizada com base na opção selecionada
+                getMenuResponse(selectedOption.option_id, async (responseText) => {
+                    if (responseText) {
+                        await sendTypingAndMessage(chat, responseText, 3000, 3000);
+                    } else {
+                        await sendTypingAndMessage(chat, `Opção selecionada: ${selectedOption.option_text}`, 3000, 3000);
+                        await endAutomation(chat); // Finaliza a automação após a última mensagem
+                    }
+                });
+            }
+        } else {
+            await showMenu(chat, menuId); // Mostra o menu novamente se a opção for inválida
+        }
+    });
+};
 
 // Evento principal para tratamento de mensagens
 client.on('message', async msg => {
