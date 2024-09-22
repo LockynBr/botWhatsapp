@@ -142,14 +142,26 @@ const handleMenuOption = async (chat, userOption, menuId) => {
                 // Busca o próximo menu
                 getMenu(selectedOption.next_menu_id, async (nextMenu) => {
                     if (nextMenu.video_url) {
-                        // Envia o vídeo se o próximo menu tiver um vídeo associado
-                        await sendTypingAndMessage(chat, `Aqui está um vídeo que pode te ajudar: ${nextMenu.video_url}`, 3000, 3000);
+                        // Verifica se a opção selecionada foi "Não sei, me envie um vídeo sobre"
+                        if (selectedOption.option_text === 'Não sei, me envie um vídeo sobre') {
+                            // Envia o vídeo e depois a mensagem de agradecimento
+                            await sendTypingAndMessage(chat, `Aqui está um vídeo que pode te ajudar: ${nextMenu.video_url}`, 3000, 3000);
+                            
+                            // Aguarda 5 segundos antes de enviar a mensagem de agradecimento
+                            setTimeout(async () => {
+                                await sendTypingAndMessage(chat, 'Obrigado por utilizar nossos serviços, você será redirecionado para um dos nossos atendentes.', 3000, 3000);
+                                await endAutomation(chat); // Finaliza a automação após a última mensagem
+                            }, 5000);
+                        } else {
+                            // Caso contrário, segue o fluxo normal de envio do vídeo e próxima opção
+                            await sendTypingAndMessage(chat, `Aqui está um vídeo que pode te ajudar: ${nextMenu.video_url}`, 3000, 3000);
 
-                        // Após o envio do vídeo, pergunta sobre o tipo de impressora
-                        setTimeout(async () => {
-                            await sendTypingAndMessage(chat, 'Agora, por favor, selecione o tipo da sua impressora para continuarmos:', 3000, 3000);
-                            await showMenu(chat, 6); // Exibe o menu de tipos de impressora (menu_id = 6)
-                        }, 5000); // Aguarda 5 segundos após o vídeo antes de enviar a pergunta
+                            // Pergunta sobre o tipo de impressora após o vídeo
+                            setTimeout(async () => {
+                                await sendTypingAndMessage(chat, 'Agora, por favor, selecione o tipo da sua impressora para continuarmos:', 3000, 3000);
+                                await showMenu(chat, 6); // Exibe o menu de tipos de impressora (menu_id = 6)
+                            }, 5000);
+                        }
                     } else {
                         // Se não houver vídeo, segue com o fluxo normal do menu
                         await showMenu(chat, selectedOption.next_menu_id);
