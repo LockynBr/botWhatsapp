@@ -56,10 +56,15 @@ let manualMode = {}; // Armazena se o cliente está no modo manual
 
 // Função para salvar o estado do chat no MySQL
 const saveChatState = (userId, currentStep, manualMode) => {
+    // Definir valores padrão se estiverem indefinidos
+    const step = currentStep !== undefined ? currentStep : null;
+    const mode = manualMode !== undefined ? manualMode : null;
+
     const query = `INSERT INTO chat_state (user_id, current_step, manual_mode) 
                    VALUES (?, ?, ?) 
                    ON DUPLICATE KEY UPDATE current_step = ?, manual_mode = ?`;
-    db.execute(query, [userId, currentStep, manualMode, currentStep, manualMode], (err, results) => {
+
+    db.execute(query, [userId, step, mode, step, mode], (err, results) => {
         if (err) throw err;
         console.log('Estado da conversa salvo no banco de dados.');
     });
@@ -72,9 +77,9 @@ const getChatState = (userId, callback) => {
         if (err) throw err;
         if (results.length > 0) {
             const { current_step, manual_mode } = results[0];
-            callback({ currentStep: current_step, manualMode: manual_mode });
+            callback({ currentStep: current_step || null, manualMode: manual_mode || null });
         } else {
-            callback(null); // Não encontrou estado salvo para esse usuário
+            callback({ currentStep: null, ManualMode: null }); // Retorna valores nulos se não houver resultados
         }
     });
 };
@@ -185,7 +190,6 @@ const handleMenuOption = async (chat, userOption, menuId) => {
 };
 
 // Evento principal para tratamento de mensagens
-// Evento principal para tratamento de mensagens
 client.on('message', async msg => {
     try {
         if (!msg.from.endsWith('@c.us')) return; // Valida se a mensagem vem de um usuário
@@ -193,25 +197,24 @@ client.on('message', async msg => {
         const chat = await msg.getChat();
         const userMessage = msg.body.toLowerCase();
 
-        // Se for a primeira interação ou a primeira mensagem do usuário
-        if (!currentStep[chat.id._serialized]) {
-            // Enviar mensagem de apresentação
-            await sendTypingAndMessage(chat, 'Olá, seja bem-vindo(a) à nossa loja de informática! Eu sou o Paulo e estou aqui para te ajudar. Se precisar saber nossos horários de funcionamento ou endereço, é só conferir no nosso perfil.', 3000, 3000);
+        // Se o cliente estiver no modo manual, você assume as respostas
+        if (manualMode[msg.from]) {
+            console.log('Cliente em modo manual, respondendo manualmente.');
+            return; // Para de processar automaticamente
         }
 
-        // Agora começa o fluxo principal (menus, opções, etc.)
+        // Recupera o estado do chat (menu atual)
         const menuId = currentStep[chat.id._serialized] || 1; // Menu inicial com id 1
 
         if (/^\d+$/.test(userMessage)) {
-            await handleMenuOption(chat, userMessage, menuId); // Processa a opção selecionada
+            await handleMenuOption(chat, userMessage, menuId); // Tratar a opção do menu
         } else {
-            await showMenu(chat, menuId); // Exibe o menu atual
+            await showMenu(chat, menuId); // Exibir o menu novamente se a entrada for inválida
         }
 
-        // Salva o novo estado no banco de dados
-        saveChatState(msg.from, currentStep[msg.from], manualMode[msg.from]);
-
+        // Salva o estado atual do chat no banco de dados
+        saveChatState(chat.id._serialized, currentStep[chat.id._serialized], manualMode[chat.id._serialized]);
     } catch (error) {
-        console.error('Erro no bot de atendimento:', error);
+        console.error(`Erro no bot de atendimento: ${error}`);
     }
 });
