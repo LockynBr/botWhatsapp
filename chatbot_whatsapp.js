@@ -185,6 +185,7 @@ const handleMenuOption = async (chat, userOption, menuId) => {
 };
 
 // Evento principal para tratamento de mensagens
+// Evento principal para tratamento de mensagens
 client.on('message', async msg => {
     try {
         if (!msg.from.endsWith('@c.us')) return; // Valida se a mensagem vem de um usuário
@@ -192,13 +193,13 @@ client.on('message', async msg => {
         const chat = await msg.getChat();
         const userMessage = msg.body.toLowerCase();
 
-        // Se o cliente estiver no modo manual, você assume as respostas
-        if (manualMode[msg.from]) {
-            console.log('Cliente em modo manual, respondendo manualmente.');
-            return; // Para de processar automaticamente
+        // Se for a primeira interação ou a primeira mensagem do usuário
+        if (!currentStep[chat.id._serialized]) {
+            // Enviar mensagem de apresentação
+            await sendTypingAndMessage(chat, 'Olá, seja bem-vindo(a) à nossa loja de informática! Eu sou o Paulo e estou aqui para te ajudar. Se precisar saber nossos horários de funcionamento ou endereço, é só conferir no nosso perfil.', 3000, 3000);
         }
 
-        // Recupera o estado do chat (menu atual)
+        // Agora começa o fluxo principal (menus, opções, etc.)
         const menuId = currentStep[chat.id._serialized] || 1; // Menu inicial com id 1
 
         if (/^\d+$/.test(userMessage)) {
